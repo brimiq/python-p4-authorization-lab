@@ -6,6 +6,12 @@ from flask_restful import Api, Resource
 
 from models import db, Article, User
 
+# Import for seeding
+from random import randint, choice as rc
+from faker import Faker
+
+fake = Faker()
+
 app = Flask(__name__)
 app.secret_key = b'Y\xf1Xz\x00\xad|eQ\x80t \xca\x1a\x10K'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
@@ -20,10 +26,47 @@ api = Api(app)
 
 class ClearSession(Resource):
 
-    def delete(self):
+    def get(self):
+        return self._clear_session()
     
+    def delete(self):
+        return self._clear_session()
+    
+    def _clear_session(self):
         session['page_views'] = None
         session['user_id'] = None
+
+        # Seed database if empty
+        if not User.query.first():
+            print("Seeding database...")
+            users = []
+            usernames = []
+            for i in range(25):
+                username = fake.first_name()
+                while username in usernames:
+                    username = fake.first_name()
+                usernames.append(username)
+                user = User(username=username)
+                users.append(user)
+            db.session.add_all(users)
+            db.session.commit()
+
+            articles = []
+            for i in range(100):
+                content = fake.paragraph(nb_sentences=8)
+                preview = content[:25] + '...'
+                article = Article(
+                    author=fake.name(),
+                    title=fake.sentence(),
+                    content=content,
+                    preview=preview,
+                    minutes_to_read=randint(1,20),
+                    is_member_only=rc([True, False, False])
+                )
+                articles.append(article)
+            db.session.add_all(articles)
+            db.session.commit()
+            print("Database seeded.")
 
         return {}, 204
 
@@ -87,12 +130,26 @@ class CheckSession(Resource):
 class MemberOnlyIndex(Resource):
     
     def get(self):
-        pass
+        # Check if user is logged in
+        if not session.get('user_id'):
+            return {'error': 'Unauthorized'}, 401
+        
+        # Return only member-only articles
+        articles = Article.query.filter(Article.is_member_only == True).all()
+        return [article.to_dict() for article in articles], 200
 
 class MemberOnlyArticle(Resource):
     
     def get(self, id):
-        pass
+        # Check if user is logged in
+        if not session.get('user_id'):
+            return {'error': 'Unauthorized'}, 401
+        
+        # Return the article
+        article = Article.query.filter(Article.id == id).first()
+        if article:
+            return article.to_dict(), 200
+        return {'error': 'Article not found'}, 404
 
 api.add_resource(ClearSession, '/clear', endpoint='clear')
 api.add_resource(IndexArticle, '/articles', endpoint='article_list')
